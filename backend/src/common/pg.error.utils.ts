@@ -3,33 +3,41 @@ import {
   BadRequestException,
   InternalServerErrorException,
   NotFoundException,
+  HttpException,
 } from '@nestjs/common';
 import { QueryFailedError } from 'typeorm';
 
-export function handlePostgresError(error: any): never {
-  // TypeORM wraps the raw PG error as `driverError`
-  // We "unwrap" it but keep a fallback to the original
-  const isQueryFailed = error instanceof QueryFailedError;
-  const pg: any = isQueryFailed && (error as any).driverError
-    ? (error as any).driverError
-    : error;
+export function mapPostgresError(error: any): HttpException {
+  // Unwrap raw PG error if coming from TypeORM
+  const pg: any =
+    error instanceof QueryFailedError && (error as any).driverError
+      ? (error as any).driverError
+      : error;
 
-  // For debugging during dev (optional)
-  console.log('Postgres error:', pg);
+  // Optional for debugging:
+  // console.log('PG CODE:', pg.code, 'DETAIL:', pg.detail);
 
   switch (pg.code) {
-    // 23505 - unique_violation
-    case '23505':
-      throw new ConflictException({
-        message: 'Duplicate record',
-        detail: pg.detail,            // "Key (email)=(...) already exists."
-        constraint: pg.constraint,    // e.g. "UQ_e12875dfb3b1d92d7d7c5377e22"
-        table: pg.table,              // "user"
+    // 23505 - unique_violation (duplicate)
+    case '23505': {
+      // If it's our user email unique constraint → custom message
+      const detail: string = pg.detail || '';
+      const isEmailUnique =
+        detail.includes('(email)') || String(pg.constraint || '').includes('email');
+
+      return new ConflictException({
+        message: isEmailUnique
+          ? 'A user with this email already exists.'
+          : 'Duplicate record',
+        detail: pg.detail,
+        constraint: pg.constraint,
+        table: pg.table,
       });
+    }
 
     // 23503 - foreign_key_violation
     case '23503':
-      throw new BadRequestException({
+      return new BadRequestException({
         message: 'Foreign key violation',
         detail: pg.detail,
         constraint: pg.constraint,
@@ -38,7 +46,7 @@ export function handlePostgresError(error: any): never {
 
     // 23502 - not_null_violation
     case '23502':
-      throw new BadRequestException({
+      return new BadRequestException({
         message: 'Null value in non-nullable column',
         column: pg.column,
         table: pg.table,
@@ -47,15 +55,14 @@ export function handlePostgresError(error: any): never {
 
     // 42P01 - undefined_table
     case '42P01':
-      throw new NotFoundException({
+      return new NotFoundException({
         message: 'Table not found',
         table: pg.table,
         detail: pg.detail,
       });
 
     default:
-      // Fallback for any unhandled DB error
-      throw new InternalServerErrorException({
+      return new InternalServerErrorException({
         message: 'Database error',
         code: pg.code,
         detail: pg.detail,

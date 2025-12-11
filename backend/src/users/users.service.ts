@@ -1,14 +1,15 @@
-import { Injectable } from '@nestjs/common';
-import { handlePostgresError } from '../common/pg.error.utils';
-
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { QueryFailedError, Repository } from 'typeorm';
+import { Repository } from 'typeorm';
 import { User } from './entities/user.entity';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
+import { mapPostgresError } from 'src/common/pg.error.utils';
 
 @Injectable()
 export class UsersService {
+  private readonly logger = new Logger(UsersService.name);
+
   constructor(
     @InjectRepository(User)
     private readonly repo: Repository<User>,
@@ -19,9 +20,9 @@ export class UsersService {
   }
 
   async findOne(id: number): Promise<User> {
-    const user = await this.repo.findOneBy({ id }); 
+    const user = await this.repo.findOneBy({ id });
     if (!user) {
-      handlePostgresError(`User ${id} not found`);
+      throw new NotFoundException(`User ${id} not found`);
     }
     return user;
   }
@@ -30,40 +31,23 @@ export class UsersService {
     const entity = this.repo.create(dto);
 
     try {
-        return await this.repo.save(entity);
+      return await this.repo.save(entity);
     } catch (error) {
-
-        // Check if this is a DB-level query error
-        if (error instanceof QueryFailedError) {
-
-        const pgError: any = error;
-
-        console.log('Postgres error:', pgError);
-
-        // Unique violation -> 23505
-        if (pgError.code === '23505') {
-
-            // Example:
-            const detail = pgError.detail || 'Duplicate key';
-
-            return Promise.reject(
-                handlePostgresError({
-                message: 'Duplicate record',
-                detail: detail,
-                constraint: pgError.constraint,
-            }),
-            );
-        }
-        }
-        // fallback - unexpected error
-        handlePostgresError('Unexpected database error');
+      this.logger.error('Error creating user', error.stack);
+      throw mapPostgresError(error);
     }
-}
+  }
 
   async update(id: number, dto: UpdateUserDto): Promise<User> {
     const user = await this.findOne(id);
     Object.assign(user, dto);
-    return this.repo.save(user);
+
+    try {
+      return await this.repo.save(user);
+    } catch (error) {
+      this.logger.error(`Error updating user ${id}`, error.stack);
+      throw mapPostgresError(error);
+    }
   }
 
   async remove(id: number): Promise<void> {

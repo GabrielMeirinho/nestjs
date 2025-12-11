@@ -6,7 +6,11 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
-  // Global validation
+  // Allow frontend (Vite) to call backend
+  app.enableCors({
+    origin: 'http://localhost:5173',
+  });
+
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
@@ -15,7 +19,6 @@ async function bootstrap() {
     }),
   );
 
-  // Enable Swagger only when not in production
   if (process.env.NODE_ENV !== 'production') {
     const config = new DocumentBuilder()
       .setTitle('Gelt Take-Home API')
@@ -24,7 +27,7 @@ async function bootstrap() {
       .build();
 
     const document = SwaggerModule.createDocument(app, config);
-    SwaggerModule.setup('docs', app, document); // -> /api
+    SwaggerModule.setup('api', app, document);
   }
 
   await app.listen(3000);
